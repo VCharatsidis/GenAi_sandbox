@@ -7,33 +7,40 @@ import numpy as np
 import matplotlib.pyplot as plt
 import torchvision.utils as vutils
 
-from architectures.U_net import Unet
+from architectures.EMA import EMA
+from architectures.U_net_embeddings import Unet_with_emb
 from get_cifar import get_loaders
 from utils import count_parameters
 
 
 # Initialize model
-diffusion = Unet().cuda()
+diffusion = Unet_with_emb().cuda()
+ema = EMA(diffusion, decay=0.999)
 
 # Print the number of trainable parameters
 print(f"Total number of trainable parameters: {count_parameters(diffusion)}")
 
 train_loader, test_loader = get_loaders()
 # Optimizer
-optimizer = optim.AdamW(diffusion.parameters(), lr=1e-4, weight_decay=1e-5)
-num_epochs = 75
+optimizer = optim.AdamW(diffusion.parameters(), lr=2e-4, weight_decay=1e-5)
+num_epochs = 300
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
 
 # Training loop
 
 for epoch in range(num_epochs):
     for i, (images, _) in enumerate(train_loader):
+        t = torch.randint(0, diffusion.n_steps, (images.size(0),)).long().cuda()
         optimizer.zero_grad()
-        batch_size = images.size(0)
-        t = torch.randint(0, diffusion.n_steps, (batch_size,))
         loss = diffusion.get_loss(images, t)
         loss.backward()
+
+        # Gradient clipping
+        torch.nn.utils.clip_grad_norm_(diffusion.parameters(), max_norm=1.0)
+
         optimizer.step()
+
+        ema.update()
 
     scheduler.step()
     # After training, generate images
